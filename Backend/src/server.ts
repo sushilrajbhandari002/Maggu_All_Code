@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import { env } from './config/env';
 import { errorHandler, notFound } from './middleware/errorHandler';
-import { testDatabaseConnection } from './config/database';
+import { syncDatabase, testDatabaseConnection } from './config/database';
 import { authRouter } from './modules/auth/auth.router';
 import { studentRouter } from './modules/student/student.router';
 import { teacherRouter } from './modules/teacher/teacher.router';
@@ -42,6 +42,7 @@ app.use(errorHandler);
 async function start() {
   try {
     await testDatabaseConnection();
+    await syncDatabase();
     app.listen(env.port, () => {
       console.log(`Backend listening on port ${env.port}`);
     });

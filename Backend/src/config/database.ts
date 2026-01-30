@@ -17,3 +17,8 @@ export async function testDatabaseConnection(): Promise<void> {
   await sequelize.authenticate();
 }
 
+export async function syncDatabase(): Promise<void> {
+  await sequelize.sync({
+    force: false,
+  });
+}

@@ -4,6 +4,11 @@ import { Event } from '../../models/Event';
 import { ClassAssignment } from '../../models/ClassAssignment';
 import { AttendanceRecord } from '../../models/AttendanceRecord';
 import { Exam } from '../../models/Exam';
+import { SchoolClass } from '../../models/SchoolClass';
+import { ClassSection } from '../../models/ClassSection';
+import { Subject } from '../../models/Subject';
+import { Role } from '../../models/Role';
+import { UserRoleAssignment } from '../../models/UserRoleAssignment';
 import { Op } from 'sequelize';
 import bcrypt from 'bcryptjs';
 
@@ -318,3 +323,239 @@ export async function deleteUser(id: number) {
   await user.destroy();
   return { success: true };
 }
+
+export async function listClassesWithSections() {
+  const classes = await SchoolClass.findAll({
+    include: [
+      {
+        model: ClassSection,
+        as: 'sections',
+      },
+    ],
+    order: [
+      ['name', 'ASC'],
+      [{ model: ClassSection, as: 'sections' }, 'name', 'ASC'],
+    ],
+  });
+
+  return classes.map((cls) => ({
+    id: cls.id,
+    name: cls.name,
+    isActive: cls.isActive,
+    sections:
+      (cls as any).sections?.map((section: ClassSection) => ({
+        id: section.id,
+        name: section.name,
+      })) ?? [],
+  }));
+}
+
+export async function createOrUpdateClassWithSections(
+  id: number | undefined,
+  data: {
+    name: string;
+    isActive?: boolean;
+    sections?: { id?: number; name: string }[];
+  }
+) {
+  let schoolClass: SchoolClass;
+  if (id) {
+    schoolClass = await SchoolClass.findByPk(id, {
+      include: [{ model: ClassSection, as: 'sections' }],
+    });
+    if (!schoolClass) {
+      throw new Error('Class not found');
+    }
+    await schoolClass.update({
+      name: data.name,
+      isActive:
+        typeof data.isActive === 'boolean' ? data.isActive : schoolClass.isActive,
+    });
+  } else {
+    schoolClass = await SchoolClass.create({
+      name: data.name,
+      isActive: data.isActive ?? true,
+    });
+  }
+
+  if (data.sections) {
+    const existingSections = await ClassSection.findAll({
+      where: { classId: schoolClass.id },
+    });
+    const incomingById = new Map<number, { name: string }>();
+    const toCreate: { name: string }[] = [];
+
+    for (const section of data.sections) {
+      if (section.id) {
+        incomingById.set(section.id, { name: section.name });
+      } else {
+        toCreate.push({ name: section.name });
+      }
+    }
+
+    // Update or delete existing
+    for (const existing of existingSections) {
+      const incoming = incomingById.get(existing.id);
+      if (!incoming) {
+        await existing.destroy();
+      } else if (incoming.name !== existing.name) {
+        await existing.update({ name: incoming.name });
+      }
+    }
+
+    // Create new
+    for (const section of toCreate) {
+      await ClassSection.create({
+        classId: schoolClass.id,
+        name: section.name,
+      });
+    }
+  }
+
+  return await SchoolClass.findByPk(schoolClass.id, {
+    include: [{ model: ClassSection, as: 'sections' }],
+  });
+}
+
+export async function deleteClassWithSections(id: number) {
+  const schoolClass = await SchoolClass.findByPk(id);
+  if (!schoolClass) {
+    throw new Error('Class not found');
+  }
+  await schoolClass.destroy();
+  return { success: true };
+}
+
+export async function listSubjects() {
+  const subjects = await Subject.findAll({ order: [['name', 'ASC']] });
+  return subjects;
+}
+
+export async function createSubject(data: { name: string; isActive?: boolean }) {
+  const subject = await Subject.create({
+    name: data.name,
+    isActive: data.isActive ?? true,
+  });
+  return subject;
+}
+
+export async function updateSubject(
+  id: number,
+  data: { name?: string; isActive?: boolean }
+) {
+  const subject = await Subject.findByPk(id);
+  if (!subject) {
+    throw new Error('Subject not found');
+  }
+  await subject.update({
+    name: data.name ?? subject.name,
+    isActive:
+      typeof data.isActive === 'boolean' ? data.isActive : subject.isActive,
+  });
+  return subject;
+}
+
+export async function deleteSubject(id: number) {
+  const subject = await Subject.findByPk(id);
+  if (!subject) {
+    throw new Error('Subject not found');
+  }
+  await subject.destroy();
+  return { success: true };
+}
+
+export async function listRoles() {
+  const roles = await Role.findAll({ order: [['name', 'ASC']] });
+  return roles;
+}
+
+export async function createRole(data: { name: string }) {
+  const role = await Role.create({ name: data.name });
+  return role;
+}
+
+export async function deleteRole(id: number) {
+  const role = await Role.findByPk(id);
+  if (!role) {
+    throw new Error('Role not found');
+  }
+  await role.destroy();
+  return { success: true };
+}
+
+export async function listRoleAssignments() {
+  const teachers = await User.findAll({
+    where: { role: 'teacher' },
+    include: [
+      {
+        model: Role,
+        as: 'roles',
+        through: { attributes: [] },
+      },
+    ],
+    order: [['name', 'ASC']],
+  });
+
+  return teachers.map((teacher) => ({
+    id: teacher.id,
+    name: teacher.name,
+    email: teacher.email,
+    teacherId: teacher.teacherId,
+    baseRole: teacher.role,
+    roles: (teacher as any).roles?.map((r: Role) => ({
+      id: r.id,
+      name: r.name,
+    })) ?? [],
+  }));
+}
+
+export async function updateRoleAssignments(
+  assignments: { userId: number; roleIds: number[] }[]
+) {
+  for (const { userId, roleIds } of assignments) {
+    const user = await User.findByPk(userId);
+    if (!user) continue;
+
+    // Clear existing assignments
+    await UserRoleAssignment.destroy({ where: { userId } });
+
+    // Insert new assignments
+    for (const roleId of roleIds) {
+      await UserRoleAssignment.create({ userId, roleId });
+    }
+  }
+}
+
+export async function isTeacherIdAvailable(teacherId: string) {
+  const existing = await User.findOne({
+    where: { teacherId },
+  });
+
+  const available = !existing;
+
+  const suggestions: string[] = [];
+  if (!available) {
+    // Simple suggestion strategy
+    const maxSuggestions = 3;
+    let base = teacherId;
+    let numMatch = teacherId.match(/(\d+)$/);
+    let start = 1;
+    if (numMatch) {
+      base = teacherId.slice(0, -numMatch[1].length);
+      start = Number(numMatch[1]) + 1;
+    }
+    let candidateIndex = start;
+    while (suggestions.length < maxSuggestions) {
+      const candidate = `${base}${candidateIndex}`;
+      // eslint-disable-next-line no-await-in-loop
+      const exists = await User.findOne({ where: { teacherId: candidate } });
+      if (!exists) {
+        suggestions.push(candidate);
+      }
+      candidateIndex += 1;
+    }
+  }
+
+  return { available, suggestions };
+}
+
